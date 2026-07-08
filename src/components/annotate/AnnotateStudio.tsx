@@ -4,12 +4,14 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Upload, MousePointer, Hexagon, Trash2, Undo2, Redo2,
   ZoomIn, ZoomOut, Save, Layers, Image as ImageIcon, Loader2,
+  LayoutGrid, List, Square,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import type { AnnotationPolygon, AnnotationImage, Point, AnnotationTool } from "@/types";
 import { POLYGON_COLORS } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
+import Image from "next/image";
 
 interface BackendPolygon {
   id: number;
@@ -23,6 +25,8 @@ interface BackendImage {
   image: string;
   polygons: BackendPolygon[];
 }
+
+type ViewMode = "single" | "grid" | "stacked";
 
 export function AnnotateStudio() {
   const [images, setImages] = useState<AnnotationImage[]>([]);
@@ -39,6 +43,7 @@ export function AnnotateStudio() {
   const [editColor, setEditColor] = useState("#EF4444");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("single");
 
   const svgRef = useRef<SVGSVGElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -51,8 +56,6 @@ export function AnnotateStudio() {
   const fetchData = useCallback(async () => {
     try {
       setIsLoading(true);
-
-      // ✅ Generic টাইপ সহ apiFetch
       const data = await apiFetch<BackendImage[]>('/api/images/');
 
       const fetchedImages: AnnotationImage[] = data.map((img) => ({
@@ -84,6 +87,40 @@ export function AnnotateStudio() {
       setIsLoading(false);
     }
   }, []);
+
+  // ── Delete Image ──
+  const handleDeleteImage = useCallback(async (imageId: string) => {
+    const imageToDelete = images.find((img) => img.id === imageId);
+    const pCount = polygons.filter((p) => p.imageId === imageId).length;
+    
+    if (!confirm(`Are you sure you want to delete "${imageToDelete?.name || 'this image'}" and all its ${pCount} annotations?`)) {
+      return;
+    }
+
+    try {
+      await apiFetch<void>(`/api/images/${imageId}/`, {
+        method: "DELETE"
+      });
+
+      setImages((prev) => prev.filter((img) => img.id !== imageId));
+      setPolygons((prev) => prev.filter((p) => p.imageId !== imageId));
+
+      if (selectedImageId === imageId) {
+        const remainingImages = images.filter((img) => img.id !== imageId);
+        if (remainingImages.length > 0) {
+          setSelectedImageId(remainingImages[0].id);
+        } else {
+          setSelectedImageId(null);
+          setSelectedPolyId(null);
+        }
+      }
+
+      toast.success("Image deleted successfully!");
+    } catch (error) {
+      console.error("Delete image error:", error);
+      toast.error(`Failed to delete image: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
+  }, [images, selectedImageId, polygons]);
 
   // Load data on mount
   useEffect(() => {
@@ -165,7 +202,6 @@ export function AnnotateStudio() {
           color: poly.color,
         };
 
-        // ✅ Generic টাইপ সহ apiFetch (সেভ করার পর ডেটা ফেরত আসতে পারে)
         const savedData = await apiFetch<{ id: number }>(url, {
           method: isNew ? "POST" : "PUT",
           headers: { "Content-Type": "application/json" },
@@ -203,7 +239,6 @@ export function AnnotateStudio() {
 
     if (!selectedPolyId.startsWith("temp_")) {
       try {
-        // ✅ DELETE এর জন্য কোনো টাইপ দরকার নেই, void ব্যবহার করুন
         await apiFetch<void>(`/api/polygons/${selectedPolyId}/`, {
           method: "DELETE"
         });
@@ -231,7 +266,6 @@ export function AnnotateStudio() {
 
     if (!selectedPoly.id.startsWith("temp_")) {
       try {
-        // ✅ PUT এর জন্য void ব্যবহার করুন
         await apiFetch<void>(`/api/polygons/${selectedPoly.id}/`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -256,15 +290,23 @@ export function AnnotateStudio() {
   }, [selectedPoly, selectedPolyId, editLabel, editColor, selectedImageId]);
 
   // ── Drawing Functions ──
-  const getSVGCoords = (e: React.MouseEvent<SVGSVGElement>): Point => {
+  const getSVGCoords = useCallback((e: React.MouseEvent<SVGSVGElement>): Point => {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
-    const rect = svg.getBoundingClientRect();
+    
+    const img = svg.previousElementSibling as HTMLImageElement;
+    if (!img) return { x: 0, y: 0 };
+    
+    const imgRect = img.getBoundingClientRect();
+    
+    const x = (e.clientX - imgRect.left) / imgRect.width;
+    const y = (e.clientY - imgRect.top) / imgRect.height;
+    
     return {
-      x: ((e.clientX - rect.left) / rect.width) * 1000,
-      y: ((e.clientY - rect.top) / rect.height) * 750,
+      x: Math.max(0, Math.min(1, x)),
+      y: Math.max(0, Math.min(1, y)),
     };
-  };
+  }, []);
 
   const finishPolygon = useCallback(() => {
     if (currentPts.length < 3 || !selectedImageId) return;
@@ -292,14 +334,16 @@ export function AnnotateStudio() {
 
       if (currentPts.length >= 3) {
         const first = currentPts[0];
-        if (Math.hypot(pt.x - first.x, pt.y - first.y) < 28) {
+        const dx = Math.abs(pt.x * 1000 - first.x * 1000);
+        const dy = Math.abs(pt.y * 750 - first.y * 750);
+        if (dx < 28 && dy < 28) {
           finishPolygon();
           return;
         }
       }
       setCurrentPts((prev) => [...prev, pt]);
     },
-    [tool, selectedImageId, currentPts, finishPolygon]
+    [tool, selectedImageId, currentPts, finishPolygon, getSVGCoords]
   );
 
   const handleSVGDblClick = useCallback(
@@ -322,7 +366,6 @@ export function AnnotateStudio() {
           const formData = new FormData();
           formData.append("image", file);
           
-          // ✅ Generic টাইপ সহ apiFetch
           const response = await apiFetch<BackendImage>('/api/images/', {
             method: "POST",
             body: formData,
@@ -416,6 +459,388 @@ export function AnnotateStudio() {
     </button>
   );
 
+  // ── Render Single Image ──
+  const renderSingleImage = () => (
+    <div className="flex-1 overflow-auto flex items-start justify-center bg-[#0F172A]">
+      {selectedImage ? (
+        <div
+          className="m-6 relative shadow-2xl rounded-xl overflow-hidden"
+          style={{
+            transform: `scale(${zoom})`,
+            transformOrigin: "top center",
+            transition: "transform 0.15s ease",
+            marginBottom: zoom > 1 ? `${zoom * 6}rem` : "1.5rem",
+          }}
+        >
+          <Image
+            src={selectedImage.url}
+            alt={selectedImage.name}
+            className="block w-full h-auto max-w-3xl"
+            style={{ filter: "brightness(0.92) contrast(1.08)" }}
+            width={1000}
+            height={750}
+          />
+          <svg
+            ref={svgRef}
+            viewBox="0 0 1000 750"
+            className="absolute inset-0 w-full h-full"
+            style={{
+              cursor: tool === "polygon" ? "crosshair" : "default",
+              userSelect: "none",
+            }}
+            onClick={handleSVGClick}
+            onDoubleClick={handleSVGDblClick}
+            onMouseMove={(e) => {
+              if (tool === "polygon") setMousePos(getSVGCoords(e));
+            }}
+            onMouseLeave={() => setMousePos(null)}
+          >
+            <defs>
+              <filter id="lblShadow">
+                <feDropShadow dx="0" dy="1" stdDeviation="2" floodColor="rgba(0,0,0,0.85)" />
+              </filter>
+            </defs>
+
+            {imgPolys.map((poly) => {
+              const sel = poly.id === selectedPolyId;
+              const viewPortPoints = poly.points.map(p => ({
+                x: p.x * 1000,
+                y: p.y * 750
+              }));
+              
+              const cx = viewPortPoints.reduce((s, p) => s + p.x, 0) / viewPortPoints.length;
+              const cy = viewPortPoints.reduce((s, p) => s + p.y, 0) / viewPortPoints.length;
+              
+              return (
+                <g key={poly.id}>
+                  <polygon
+                    points={viewPortPoints.map((p) => `${p.x},${p.y}`).join(" ")}
+                    fill={poly.color + "38"}
+                    stroke={poly.color}
+                    strokeWidth={sel ? 2.5 : 1.5}
+                    style={{
+                      cursor: tool === "select" ? "pointer" : "crosshair",
+                      transition: "stroke-width 0.1s",
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (tool === "select") setSelectedPolyId(sel ? null : poly.id);
+                    }}
+                  />
+                  {viewPortPoints.map((pt, i) => (
+                    <circle
+                      key={i}
+                      cx={pt.x}
+                      cy={pt.y}
+                      r={sel ? 5 : 3}
+                      fill="white"
+                      stroke={poly.color}
+                      strokeWidth={sel ? 2 : 1.5}
+                    />
+                  ))}
+                  <text
+                    x={cx}
+                    y={cy}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fill="white"
+                    fontSize={13}
+                    fontWeight="700"
+                    filter="url(#lblShadow)"
+                    style={{ pointerEvents: "none", userSelect: "none" }}
+                  >
+                    {poly.label}
+                  </text>
+                </g>
+              );
+            })}
+
+            {currentPts.length > 0 && (
+              <g>
+                <polyline
+                  points={currentPts.map((p) => `${p.x * 1000},${p.y * 750}`).join(" ")}
+                  fill="none"
+                  stroke="#7C3AED"
+                  strokeWidth={2}
+                  strokeDasharray="7,4"
+                  strokeLinecap="round"
+                />
+                {mousePos && (
+                  <line
+                    x1={currentPts[currentPts.length - 1].x * 1000}
+                    y1={currentPts[currentPts.length - 1].y * 750}
+                    x2={mousePos.x * 1000}
+                    y2={mousePos.y * 750}
+                    stroke="#A78BFA"
+                    strokeWidth={1.5}
+                    strokeDasharray="5,3"
+                  />
+                )}
+                {currentPts.map((pt, i) => (
+                  <circle
+                    key={i}
+                    cx={pt.x * 1000}
+                    cy={pt.y * 750}
+                    r={i === 0 ? 8 : 5}
+                    fill={i === 0 ? "#7C3AED" : "white"}
+                    stroke={i === 0 ? "white" : "#7C3AED"}
+                    strokeWidth={2}
+                    style={{
+                      cursor: i === 0 && currentPts.length >= 3 ? "pointer" : "crosshair",
+                    }}
+                  />
+                ))}
+                {currentPts.length >= 3 && (
+                  <text
+                    x={currentPts[0].x * 1000}
+                    y={currentPts[0].y * 750 - 14}
+                    textAnchor="middle"
+                    fill="#A78BFA"
+                    fontSize={10}
+                    fontWeight="600"
+                  >
+                    Close
+                  </text>
+                )}
+              </g>
+            )}
+          </svg>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center justify-center h-full text-center">
+          <ImageIcon size={48} className="text-[#1E293B] mb-4" />
+          <p className="text-[#475569] font-medium text-sm">No image selected</p>
+          <p className="text-[#334155] text-xs mt-1">
+            Upload a medical image to begin annotating
+          </p>
+        </div>
+      )}
+    </div>
+  );
+
+  // ── Render Grid View ──
+  const renderGridView = () => (
+    <div className="flex-1 overflow-auto p-6 bg-[#0F172A]">
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        {images.map((img) => {
+          const pCount = polygons.filter((p) => p.imageId === img.id).length;
+          const isSelected = selectedImageId === img.id;
+          
+          return (
+            <div
+              key={img.id}
+              onClick={() => {
+                setSelectedImageId(img.id);
+                setSelectedPolyId(null);
+                setCurrentPts([]);
+                setViewMode("single");
+              }}
+              className={cn(
+                "relative rounded-xl overflow-hidden cursor-pointer transition-all group",
+                isSelected 
+                  ? "ring-2 ring-[#7C3AED] shadow-lg shadow-[#7C3AED]/30" 
+                  : "hover:ring-2 hover:ring-[#7C3AED]/50"
+              )}
+            >
+              <div className="aspect-square bg-[#1E293B]">
+                <Image
+                  src={img.url}
+                  alt={img.name}
+                  className="w-full h-full object-cover"
+                  width={1000}
+                  height={750}
+                />
+              </div>
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+              
+              {/* Delete Button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteImage(img.id);
+                }}
+                className="absolute top-2 right-2 p-1.5 rounded-lg bg-red-500/80 hover:bg-red-600 text-white opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                title="Delete image"
+              >
+                <Trash2 size={12} />
+              </button>
+              
+              <div className="absolute bottom-0 left-0 right-0 p-3">
+                <p className="text-white text-sm font-medium truncate">{img.name}</p>
+                <p className="text-[#94A3B8] text-xs">
+                  {pCount} annotation{pCount !== 1 ? "s" : ""}
+                </p>
+              </div>
+              {isSelected && (
+                <div className="absolute top-2 left-2 bg-[#7C3AED] text-white text-xs px-2 py-1 rounded">
+                  Selected
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {images.length === 0 && (
+          <div className="col-span-full flex flex-col items-center justify-center py-20">
+            <ImageIcon size={48} className="text-[#1E293B] mb-4" />
+            <p className="text-[#475569]">No images uploaded yet</p>
+            <button
+              onClick={() => fileRef.current?.click()}
+              className="mt-4 px-4 py-2 bg-[#7C3AED] text-white rounded-lg text-sm hover:bg-[#6D28D9] transition-colors"
+            >
+              Upload Images
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // ── Render Stacked View ──
+  const renderStackedView = () => (
+    <div className="flex-1 overflow-auto p-6 bg-[#0F172A] space-y-8">
+      {images.map((img) => {
+        const pCount = polygons.filter((p) => p.imageId === img.id).length;
+        const isSelected = selectedImageId === img.id;
+        
+        return (
+          <div
+            key={img.id}
+            onClick={() => {
+              setSelectedImageId(img.id);
+              setSelectedPolyId(null);
+              setCurrentPts([]);
+              setViewMode("single");
+            }}
+            className={cn(
+              "relative rounded-xl overflow-hidden cursor-pointer transition-all group bg-[#1E293B] shadow-xl",
+              isSelected && "ring-2 ring-[#7C3AED]"
+            )}
+          >
+            <div className="relative">
+              <Image
+                src={img.url}
+                alt={img.name}
+                className="w-full h-auto max-h-[600px] object-contain"
+                width={1000}
+                height={750}
+              />
+              
+              {/* Delete Button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteImage(img.id);
+                }}
+                className="absolute top-4 right-4 p-2 rounded-lg bg-red-500/80 hover:bg-red-600 text-white opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                title="Delete image"
+              >
+                <Trash2 size={16} />
+              </button>
+              
+              <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/70 to-transparent">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-white font-medium">{img.name}</h3>
+                  <span className="text-[#94A3B8] text-sm bg-black/50 px-3 py-1 rounded">
+                    {pCount} annotation{pCount !== 1 ? "s" : ""}
+                  </span>
+                </div>
+              </div>
+              {isSelected && (
+                <div className="absolute top-20 right-4 bg-[#7C3AED] text-white text-xs px-3 py-1 rounded">
+                  Click to annotate
+                </div>
+              )}
+              {imgPolys.length > 0 && (
+                <div className="absolute bottom-4 right-4 flex gap-1">
+                  {imgPolys.slice(0, 3).map((poly, i) => (
+                    <div
+                      key={i}
+                      className="w-3 h-3 rounded-full border border-white/30"
+                      style={{ backgroundColor: poly.color }}
+                    />
+                  ))}
+                  {imgPolys.length > 3 && (
+                    <span className="text-[10px] text-white bg-black/50 px-1.5 rounded">
+                      +{imgPolys.length - 3}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      {images.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-20">
+          <ImageIcon size={48} className="text-[#1E293B] mb-4" />
+          <p className="text-[#475569]">No images uploaded yet</p>
+          <button
+            onClick={() => fileRef.current?.click()}
+            className="mt-4 px-4 py-2 bg-[#7C3AED] text-white rounded-lg text-sm hover:bg-[#6D28D9] transition-colors"
+          >
+            Upload Images
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  // ── Sidebar Image List (with Delete) ──
+  const renderSidebarImages = () => (
+    <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+      {images.map((img) => {
+        const pCount = polygons.filter((p) => p.imageId === img.id).length;
+        return (
+          <div key={img.id} className="relative group">
+            <button
+              onClick={() => {
+                setSelectedImageId(img.id);
+                setSelectedPolyId(null);
+                setCurrentPts([]);
+              }}
+              className={cn(
+                "w-full text-left rounded-xl overflow-hidden border transition-all",
+                selectedImageId === img.id
+                  ? "border-[#7C3AED] shadow-lg shadow-[#7C3AED]/20"
+                  : "border-white/6 hover:border-white/15"
+              )}
+            >
+              <div className="aspect-video bg-[#0F172A] overflow-hidden">
+                <Image
+                  src={img.url}
+                  alt={img.name}
+                  width={1000}
+                  height={750}
+                  className="w-full h-full object-cover opacity-90"
+                />
+              </div>
+              <div className="p-2">
+                <p className="text-[11px] text-[#E2E8F0] font-medium truncate">
+                  {img.name}
+                </p>
+                <p className="text-[9px] text-[#475569] mt-0.5">
+                  {pCount} annotation{pCount !== 1 ? "s" : ""}
+                </p>
+              </div>
+            </button>
+            
+            {/* Delete Button on Hover */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDeleteImage(img.id);
+              }}
+              className="absolute top-2 right-2 p-1.5 rounded-lg bg-red-500/80 hover:bg-red-600 text-white opacity-0 group-hover:opacity-100 transition-opacity z-10"
+              title="Delete image"
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+
   if (isLoading) {
     return (
       <div className="h-full flex items-center justify-center bg-[#0F172A]">
@@ -492,369 +917,223 @@ export function AnnotateStudio() {
 
         <div className="w-px h-5 bg-white/10 mx-1" />
 
-        <button
-          onClick={() => setZoom((z) => Math.min(3, +(z + 0.25).toFixed(2)))}
-          className="h-8 w-8 rounded-lg flex items-center justify-center text-[#94A3B8] hover:bg-white/8 hover:text-white transition-colors"
-        >
-          <ZoomIn size={13} />
-        </button>
-        <button
-          onClick={() => setZoom(1)}
-          className="h-8 px-2 rounded-lg text-[11px] font-mono text-[#94A3B8] hover:bg-white/8 hover:text-white transition-colors min-w-[40px] text-center"
-        >
-          {Math.round(zoom * 100)}%
-        </button>
-        <button
-          onClick={() => setZoom((z) => Math.max(0.25, +(z - 0.25).toFixed(2)))}
-          className="h-8 w-8 rounded-lg flex items-center justify-center text-[#94A3B8] hover:bg-white/8 hover:text-white transition-colors"
-        >
-          <ZoomOut size={13} />
-        </button>
+        {viewMode === "single" && (
+          <>
+            <button
+              onClick={() => setZoom((z) => Math.min(3, +(z + 0.25).toFixed(2)))}
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-[#94A3B8] hover:bg-white/8 hover:text-white transition-colors"
+            >
+              <ZoomIn size={13} />
+            </button>
+            <button
+              onClick={() => setZoom(1)}
+              className="h-8 px-2 rounded-lg text-[11px] font-mono text-[#94A3B8] hover:bg-white/8 hover:text-white transition-colors min-w-[40px] text-center"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              onClick={() => setZoom((z) => Math.max(0.25, +(z - 0.25).toFixed(2)))}
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-[#94A3B8] hover:bg-white/8 hover:text-white transition-colors"
+            >
+              <ZoomOut size={13} />
+            </button>
+            <div className="w-px h-5 bg-white/10 mx-1" />
+          </>
+        )}
 
         <span className="text-[10px] text-[#475569] hidden lg:block ml-2 max-w-xs truncate">
           {toolHint}
         </span>
 
-        <button
-          onClick={handleSaveAnnotations}
-          disabled={isSaving}
-          className="ml-auto flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-[11px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-          {isSaving ? "Saving..." : "Save"}
-        </button>
+        <div className="ml-auto flex items-center gap-1">
+          {/* View Mode Buttons */}
+          <button
+            onClick={() => setViewMode("single")}
+            className={cn(
+              "h-7 w-7 rounded-lg flex items-center justify-center transition-colors",
+              viewMode === "single" 
+                ? "bg-[#7C3AED]/25 text-[#A78BFA]" 
+                : "text-[#475569] hover:text-white hover:bg-white/8"
+            )}
+            title="Single View"
+          >
+            <Square size={14} />
+          </button>
+          <button
+            onClick={() => setViewMode("grid")}
+            className={cn(
+              "h-7 w-7 rounded-lg flex items-center justify-center transition-colors",
+              viewMode === "grid" 
+                ? "bg-[#7C3AED]/25 text-[#A78BFA]" 
+                : "text-[#475569] hover:text-white hover:bg-white/8"
+            )}
+            title="Grid View"
+          >
+            <LayoutGrid size={14} />
+          </button>
+          <button
+            onClick={() => setViewMode("stacked")}
+            className={cn(
+              "h-7 w-7 rounded-lg flex items-center justify-center transition-colors",
+              viewMode === "stacked" 
+                ? "bg-[#7C3AED]/25 text-[#A78BFA]" 
+                : "text-[#475569] hover:text-white hover:bg-white/8"
+            )}
+            title="Stacked View"
+          >
+            <List size={14} />
+          </button>
+
+          <div className="w-px h-5 bg-white/10 mx-1" />
+
+          <button
+            onClick={handleSaveAnnotations}
+            disabled={isSaving || viewMode !== "single"}
+            className={cn(
+              "flex items-center gap-1.5 h-8 px-3 rounded-lg text-[11px] font-medium transition-colors",
+              viewMode === "single"
+                ? "bg-[#2563EB] hover:bg-[#1D4ED8] text-white"
+                : "bg-[#1E293B] text-[#475569] cursor-not-allowed"
+            )}
+          >
+            {isSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+            {isSaving ? "Saving..." : "Save"}
+          </button>
+        </div>
       </div>
 
       {/* ── Main 3-pane ── */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Image list */}
-        <div className="w-52 bg-[#1E293B] border-r border-white/8 flex flex-col overflow-hidden shrink-0">
-          <div className="px-3 py-3 border-b border-white/8 flex items-center justify-between">
-            <h3 className="text-[10px] font-semibold text-[#475569] uppercase tracking-widest">
-              Images ({images.length})
-            </h3>
-            <button
-              onClick={() => fileRef.current?.click()}
-              className="text-[#475569] hover:text-[#A78BFA] transition-colors"
-            >
-              <Upload size={14} />
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
-            {images.map((img) => {
-              const pCount = polygons.filter((p) => p.imageId === img.id).length;
-              return (
-                <button
-                  key={img.id}
-                  onClick={() => {
-                    setSelectedImageId(img.id);
-                    setSelectedPolyId(null);
-                    setCurrentPts([]);
-                  }}
-                  className={cn(
-                    "w-full text-left rounded-xl overflow-hidden border transition-all",
-                    selectedImageId === img.id
-                      ? "border-[#7C3AED] shadow-lg shadow-[#7C3AED]/20"
-                      : "border-white/6 hover:border-white/15"
-                  )}
-                >
-                  <div className="aspect-video bg-[#0F172A] overflow-hidden">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={img.url}
-                      alt={img.name}
-                      className="w-full h-full object-cover opacity-90"
-                    />
-                  </div>
-                  <div className="p-2">
-                    <p className="text-[11px] text-[#E2E8F0] font-medium truncate">
-                      {img.name}
-                    </p>
-                    <p className="text-[9px] text-[#475569] mt-0.5">
-                      {pCount} annotation{pCount !== 1 ? "s" : ""}
-                    </p>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Center: SVG canvas */}
-        <div
-          className="flex-1 overflow-auto flex items-start justify-center bg-[#0F172A]"
-          style={{
-            backgroundImage:
-              "radial-gradient(circle, rgba(255,255,255,0.02) 1px, transparent 1px)",
-            backgroundSize: "20px 20px",
-          }}
-        >
-          {selectedImage ? (
-            <div
-              className="m-6 relative shadow-2xl rounded-xl overflow-hidden"
-              style={{
-                transform: `scale(${zoom})`,
-                transformOrigin: "top center",
-                transition: "transform 0.15s ease",
-                marginBottom: zoom > 1 ? `${zoom * 6}rem` : "1.5rem",
-              }}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={selectedImage.url}
-                alt={selectedImage.name}
-                className="block w-full h-auto max-w-3xl"
-                style={{ filter: "brightness(0.92) contrast(1.08)" }}
-              />
-              <svg
-                ref={svgRef}
-                viewBox="0 0 1000 750"
-                className="absolute inset-0 w-full h-full"
-                style={{
-                  cursor: tool === "polygon" ? "crosshair" : "default",
-                  userSelect: "none",
-                }}
-                onClick={handleSVGClick}
-                onDoubleClick={handleSVGDblClick}
-                onMouseMove={(e) => {
-                  if (tool === "polygon") setMousePos(getSVGCoords(e));
-                }}
-                onMouseLeave={() => setMousePos(null)}
+        {/* Left: Image list - Hidden in grid/stacked mode for more space */}
+        {viewMode === "single" && (
+          <div className="w-52 bg-[#1E293B] border-r border-white/8 flex flex-col overflow-hidden shrink-0">
+            <div className="px-3 py-3 border-b border-white/8 flex items-center justify-between">
+              <h3 className="text-[10px] font-semibold text-[#475569] uppercase tracking-widest">
+                Images ({images.length})
+              </h3>
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="text-[#475569] hover:text-[#A78BFA] transition-colors"
               >
-                <defs>
-                  <filter id="lblShadow">
-                    <feDropShadow
-                      dx="0"
-                      dy="1"
-                      stdDeviation="2"
-                      floodColor="rgba(0,0,0,0.85)"
-                    />
-                  </filter>
-                </defs>
+                <Upload size={14} />
+              </button>
+            </div>
+            {renderSidebarImages()}
+          </div>
+        )}
 
-                {/* Completed polygons */}
-                {imgPolys.map((poly) => {
-                  const sel = poly.id === selectedPolyId;
-                  const cx =
-                    poly.points.reduce((s, p) => s + p.x, 0) / poly.points.length;
-                  const cy =
-                    poly.points.reduce((s, p) => s + p.y, 0) / poly.points.length;
-                  return (
-                    <g key={poly.id}>
-                      <polygon
-                        points={poly.points.map((p) => `${p.x},${p.y}`).join(" ")}
-                        fill={poly.color + "38"}
-                        stroke={poly.color}
-                        strokeWidth={sel ? 2.5 : 1.5}
-                        style={{
-                          cursor: tool === "select" ? "pointer" : "crosshair",
-                          transition: "stroke-width 0.1s",
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (tool === "select")
-                            setSelectedPolyId(sel ? null : poly.id);
-                        }}
-                      />
-                      {poly.points.map((pt, i) => (
-                        <circle
-                          key={i}
-                          cx={pt.x}
-                          cy={pt.y}
-                          r={sel ? 5 : 3}
-                          fill="white"
-                          stroke={poly.color}
-                          strokeWidth={sel ? 2 : 1.5}
-                        />
-                      ))}
-                      <text
-                        x={cx}
-                        y={cy}
-                        textAnchor="middle"
-                        dominantBaseline="middle"
-                        fill="white"
-                        fontSize={13}
-                        fontWeight="700"
-                        filter="url(#lblShadow)"
-                        style={{ pointerEvents: "none", userSelect: "none" }}
-                      >
-                        {poly.label}
-                      </text>
-                    </g>
-                  );
-                })}
+        {/* Center: Image display */}
+        {viewMode === "single" && renderSingleImage()}
+        {viewMode === "grid" && renderGridView()}
+        {viewMode === "stacked" && renderStackedView()}
 
-                {/* In-progress polygon */}
-                {currentPts.length > 0 && (
-                  <g>
-                    <polyline
-                      points={currentPts.map((p) => `${p.x},${p.y}`).join(" ")}
-                      fill="none"
-                      stroke="#7C3AED"
-                      strokeWidth={2}
-                      strokeDasharray="7,4"
-                      strokeLinecap="round"
-                    />
-                    {mousePos && (
-                      <line
-                        x1={currentPts[currentPts.length - 1].x}
-                        y1={currentPts[currentPts.length - 1].y}
-                        x2={mousePos.x}
-                        y2={mousePos.y}
-                        stroke="#A78BFA"
-                        strokeWidth={1.5}
-                        strokeDasharray="5,3"
-                      />
+        {/* Right: Annotations list + properties - Hidden in grid/stacked mode */}
+        {viewMode === "single" && (
+          <div className="w-52 bg-[#1E293B] border-l border-white/8 flex flex-col overflow-hidden shrink-0">
+            <div className="px-3 py-3 border-b border-white/8">
+              <h3 className="text-[10px] font-semibold text-[#475569] uppercase tracking-widest">
+                Annotations ({imgPolys.length})
+              </h3>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              {imgPolys.length === 0 ? (
+                <div className="py-10 text-center">
+                  <Layers size={22} className="text-[#1E293B] mx-auto mb-2 opacity-70" />
+                  <p className="text-[11px] text-[#475569]">No annotations yet</p>
+                  <p className="text-[10px] text-[#334155] mt-0.5">Use the polygon tool</p>
+                </div>
+              ) : (
+                imgPolys.map((poly) => (
+                  <button
+                    key={poly.id}
+                    onClick={() =>
+                      setSelectedPolyId(selectedPolyId === poly.id ? null : poly.id)
+                    }
+                    className={cn(
+                      "w-full flex items-center gap-2 p-2 rounded-lg text-left transition-all",
+                      selectedPolyId === poly.id
+                        ? "bg-[#7C3AED]/20 border border-[#7C3AED]/30"
+                        : "hover:bg-white/5 border border-transparent"
                     )}
-                    {currentPts.map((pt, i) => (
-                      <circle
-                        key={i}
-                        cx={pt.x}
-                        cy={pt.y}
-                        r={i === 0 ? 8 : 5}
-                        fill={i === 0 ? "#7C3AED" : "white"}
-                        stroke={i === 0 ? "white" : "#7C3AED"}
-                        strokeWidth={2}
+                  >
+                    <div
+                      className="w-3 h-3 rounded-sm shrink-0"
+                      style={{ backgroundColor: poly.color }}
+                    />
+                    <span className="text-[11px] text-[#E2E8F0] truncate flex-1">
+                      {poly.label}
+                    </span>
+                    <span className="text-[9px] text-[#475569] shrink-0">
+                      {poly.points.length}pt
+                    </span>
+                    {poly.id.startsWith("temp_") && (
+                      <span className="text-[8px] text-yellow-500 bg-yellow-500/20 px-1 rounded">
+                        NEW
+                      </span>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+
+            {/* Properties editor */}
+            {selectedPoly && (
+              <div className="border-t border-white/8 p-3 space-y-3">
+                <h3 className="text-[10px] font-semibold text-[#475569] uppercase tracking-widest">
+                  Properties
+                </h3>
+                <div>
+                  <label className="text-[10px] font-medium text-[#475569] block mb-1">
+                    Label
+                  </label>
+                  <input
+                    value={editLabel}
+                    onChange={(e) => setEditLabel(e.target.value)}
+                    className="w-full h-8 px-2 rounded-lg bg-white/6 border border-white/10 text-[11px] text-[#E2E8F0] focus:outline-none focus:border-[#7C3AED] transition-colors"
+                    placeholder="Enter label..."
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-medium text-[#475569] block mb-1">
+                    Color
+                  </label>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {POLYGON_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        onClick={() => setEditColor(c)}
+                        className="w-5 h-5 rounded-full transition-transform hover:scale-110"
                         style={{
-                          cursor:
-                            i === 0 && currentPts.length >= 3
-                              ? "pointer"
-                              : "crosshair",
+                          backgroundColor: c,
+                          outline: editColor === c ? "2px solid white" : "none",
+                          outlineOffset: "1px",
                         }}
                       />
                     ))}
-                    {currentPts.length >= 3 && (
-                      <text
-                        x={currentPts[0].x}
-                        y={currentPts[0].y - 14}
-                        textAnchor="middle"
-                        fill="#A78BFA"
-                        fontSize={10}
-                        fontWeight="600"
-                      >
-                        Close
-                      </text>
-                    )}
-                  </g>
-                )}
-              </svg>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full text-center">
-              <ImageIcon size={48} className="text-[#1E293B] mb-4" />
-              <p className="text-[#475569] font-medium text-sm">No image selected</p>
-              <p className="text-[#334155] text-xs mt-1">
-                Upload a medical image to begin annotating
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* Right: Annotations list + properties */}
-        <div className="w-52 bg-[#1E293B] border-l border-white/8 flex flex-col overflow-hidden shrink-0">
-          <div className="px-3 py-3 border-b border-white/8">
-            <h3 className="text-[10px] font-semibold text-[#475569] uppercase tracking-widest">
-              Annotations ({imgPolys.length})
-            </h3>
-          </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {imgPolys.length === 0 ? (
-              <div className="py-10 text-center">
-                <Layers size={22} className="text-[#1E293B] mx-auto mb-2 opacity-70" />
-                <p className="text-[11px] text-[#475569]">No annotations yet</p>
-                <p className="text-[10px] text-[#334155] mt-0.5">Use the polygon tool</p>
-              </div>
-            ) : (
-              imgPolys.map((poly) => (
+                  </div>
+                </div>
+                <div className="flex justify-between text-[10px] text-[#475569]">
+                  <span>Vertices</span>
+                  <span className="text-[#94A3B8] font-mono">
+                    {selectedPoly.points.length}
+                  </span>
+                </div>
                 <button
-                  key={poly.id}
-                  onClick={() =>
-                    setSelectedPolyId(selectedPolyId === poly.id ? null : poly.id)
-                  }
-                  className={cn(
-                    "w-full flex items-center gap-2 p-2 rounded-lg text-left transition-all",
-                    selectedPolyId === poly.id
-                      ? "bg-[#7C3AED]/20 border border-[#7C3AED]/30"
-                      : "hover:bg-white/5 border border-transparent"
-                  )}
+                  onClick={handleUpdateProperties}
+                  className="w-full h-8 rounded-lg bg-[#7C3AED] hover:bg-[#6D28D9] text-white text-[11px] font-medium transition-colors"
                 >
-                  <div
-                    className="w-3 h-3 rounded-sm shrink-0"
-                    style={{ backgroundColor: poly.color }}
-                  />
-                  <span className="text-[11px] text-[#E2E8F0] truncate flex-1">
-                    {poly.label}
-                  </span>
-                  <span className="text-[9px] text-[#475569] shrink-0">
-                    {poly.points.length}pt
-                  </span>
-                  {poly.id.startsWith("temp_") && (
-                    <span className="text-[8px] text-yellow-500 bg-yellow-500/20 px-1 rounded">
-                      NEW
-                    </span>
-                  )}
+                  Apply Changes
                 </button>
-              ))
+                <button
+                  onClick={handleDeleteSelected}
+                  className="w-full h-8 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-400 text-[11px] font-medium transition-colors"
+                >
+                  Delete Annotation
+                </button>
+              </div>
             )}
           </div>
-
-          {/* Properties editor */}
-          {selectedPoly && (
-            <div className="border-t border-white/8 p-3 space-y-3">
-              <h3 className="text-[10px] font-semibold text-[#475569] uppercase tracking-widest">
-                Properties
-              </h3>
-              <div>
-                <label className="text-[10px] font-medium text-[#475569] block mb-1">
-                  Label
-                </label>
-                <input
-                  value={editLabel}
-                  onChange={(e) => setEditLabel(e.target.value)}
-                  className="w-full h-8 px-2 rounded-lg bg-white/6 border border-white/10 text-[11px] text-[#E2E8F0] focus:outline-none focus:border-[#7C3AED] transition-colors"
-                  placeholder="Enter label..."
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-medium text-[#475569] block mb-1">
-                  Color
-                </label>
-                <div className="flex gap-1.5 flex-wrap">
-                  {POLYGON_COLORS.map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => setEditColor(c)}
-                      className="w-5 h-5 rounded-full transition-transform hover:scale-110"
-                      style={{
-                        backgroundColor: c,
-                        outline: editColor === c ? "2px solid white" : "none",
-                        outlineOffset: "1px",
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-              <div className="flex justify-between text-[10px] text-[#475569]">
-                <span>Vertices</span>
-                <span className="text-[#94A3B8] font-mono">
-                  {selectedPoly.points.length}
-                </span>
-              </div>
-              <button
-                onClick={handleUpdateProperties}
-                className="w-full h-8 rounded-lg bg-[#7C3AED] hover:bg-[#6D28D9] text-white text-[11px] font-medium transition-colors"
-              >
-                Apply Changes
-              </button>
-              <button
-                onClick={handleDeleteSelected}
-                className="w-full h-8 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-400 text-[11px] font-medium transition-colors"
-              >
-                Delete Annotation
-              </button>
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );

@@ -8,7 +8,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { Navbar } from "@/components/layout/Navbar";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { cn } from "@/lib/utils";
-import { Toaster } from "react-hot-toast";
+
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { isLoggedIn } = useAuth();
@@ -75,7 +75,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               className="h-full"
             >
               {children}
-              <Toaster />
             </motion.div>
           </AnimatePresence>
         </main>
