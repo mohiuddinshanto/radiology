@@ -93,3 +93,11 @@ export interface TaskFormData {
   tags: string[];
   assignee: string;
 }
+
+
+export interface RemotePattern {
+  protocol: "http" | "https";
+  hostname: string;
+  port?: string;
+  pathname: string;
+}

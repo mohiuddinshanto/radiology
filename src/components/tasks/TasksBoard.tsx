@@ -144,6 +144,7 @@ export function TasksBoard() {
         onSave={handleSave}
         task={editingTask}
         defaultStatus={defaultStatus}
+        defaultDueDate={selectedDate}
       />
     </div>
   );

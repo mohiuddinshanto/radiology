@@ -52,7 +52,7 @@ export function AnnotateStudio() {
   const selectedPoly = polygons.find((p) => p.id === selectedPolyId);
   const imgPolys = polygons.filter((p) => p.imageId === selectedImageId);
 
-  // ── Data Fetching ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Data Fetching Ã¢â€â‚¬Ã¢â€â‚¬
   const fetchData = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -88,7 +88,7 @@ export function AnnotateStudio() {
     }
   }, []);
 
-  // ── Delete Image ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Delete Image Ã¢â€â‚¬Ã¢â€â‚¬
   const handleDeleteImage = useCallback(async (imageId: string) => {
     const imageToDelete = images.find((img) => img.id === imageId);
     const pCount = polygons.filter((p) => p.imageId === imageId).length;
@@ -155,7 +155,7 @@ export function AnnotateStudio() {
     []
   );
 
-  // ── Undo/Redo ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Undo/Redo Ã¢â€â‚¬Ã¢â€â‚¬
   const handleUndo = useCallback(() => {
     if (!history.length) return;
     setFuture((f) => [polygons, ...f]);
@@ -172,7 +172,7 @@ export function AnnotateStudio() {
     toast.success("Redo successful");
   }, [future, polygons]);
 
-  // ── Save Annotations ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Save Annotations Ã¢â€â‚¬Ã¢â€â‚¬
   const handleSaveAnnotations = useCallback(async () => {
     if (!selectedImageId) {
       toast.error("No image selected");
@@ -208,21 +208,28 @@ export function AnnotateStudio() {
           body: JSON.stringify(payload),
         });
 
-        if (isNew) {
-          return { ...poly, id: String(savedData.id) };
-        }
-        return poly;
+        return {
+          previousId: poly.id,
+          polygon: isNew ? { ...poly, id: String(savedData.id) } : poly,
+        };
       });
 
       const savedPolygons = await Promise.all(savePromises);
 
       setPolygons((prev) => {
         const updated = prev.map((p) => {
-          const saved = savedPolygons.find((sp) => sp.id === p.id);
-          return saved || p;
+          const saved = savedPolygons.find((entry) => entry.previousId === p.id);
+          return saved?.polygon || p;
         });
         return updated;
       });
+
+      const selectedSavedPolygon = savedPolygons.find(
+        (entry) => entry.previousId === selectedPolyId
+      );
+      if (selectedSavedPolygon) {
+        setSelectedPolyId(selectedSavedPolygon.polygon.id);
+      }
 
       toast.success(`Saved ${currentImagePolygons.length} annotations successfully!`);
     } catch (error) {
@@ -231,9 +238,9 @@ export function AnnotateStudio() {
     } finally {
       setIsSaving(false);
     }
-  }, [polygons, selectedImageId]);
+  }, [polygons, selectedImageId, selectedPolyId]);
 
-  // ── Delete Polygon ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Delete Polygon Ã¢â€â‚¬Ã¢â€â‚¬
   const handleDeleteSelected = useCallback(async () => {
     if (!selectedPolyId) return;
 
@@ -254,7 +261,7 @@ export function AnnotateStudio() {
     toast.success("Annotation deleted");
   }, [selectedPolyId, polygons, commitPolygons]);
 
-  // ── Update Polygon Properties ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Update Polygon Properties Ã¢â€â‚¬Ã¢â€â‚¬
   const handleUpdateProperties = useCallback(async () => {
     if (!selectedPoly) return;
 
@@ -289,7 +296,7 @@ export function AnnotateStudio() {
     toast.success("Properties updated");
   }, [selectedPoly, selectedPolyId, editLabel, editColor, selectedImageId]);
 
-  // ── Drawing Functions ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Drawing Functions Ã¢â€â‚¬Ã¢â€â‚¬
   const getSVGCoords = useCallback((e: React.MouseEvent<SVGSVGElement>): Point => {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
@@ -320,12 +327,12 @@ export function AnnotateStudio() {
       label: `Region ${String.fromCharCode(65 + count)}`,
     };
 
-    setPolygons((prev) => [...prev, newPoly]);
+    commitPolygons([...polygons, newPoly], polygons);
     setCurrentPts([]);
     setSelectedPolyId(newPoly.id);
     setTool("select");
     toast.success("Polygon created! Click Save to persist.");
-  }, [currentPts, selectedImageId, imgPolys.length]);
+  }, [currentPts, selectedImageId, imgPolys.length, polygons, commitPolygons]);
 
   const handleSVGClick = useCallback(
     (e: React.MouseEvent<SVGSVGElement>) => {
@@ -355,7 +362,7 @@ export function AnnotateStudio() {
     [tool, currentPts, selectedImageId, finishPolygon]
   );
 
-  // ── Image Upload ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Image Upload Ã¢â€â‚¬Ã¢â€â‚¬
   const handleFileUpload = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
@@ -398,7 +405,7 @@ export function AnnotateStudio() {
     [fetchData]
   );
 
-  // ── Keyboard shortcuts ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Keyboard shortcuts Ã¢â€â‚¬Ã¢â€â‚¬
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -425,14 +432,14 @@ export function AnnotateStudio() {
     return () => document.removeEventListener("keydown", handler);
   }, [handleUndo, handleRedo, handleSaveAnnotations, handleDeleteSelected, selectedPolyId]);
 
-  // ── Toolbar Helper ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Toolbar Helper Ã¢â€â‚¬Ã¢â€â‚¬
   const toolHint =
     tool === "polygon" && currentPts.length === 0
       ? "Click on the image to place vertices"
       : tool === "polygon"
-        ? `${currentPts.length} vertices — click first point or double-click to close`
+        ? `${currentPts.length} vertices Ã¢â‚¬â€ click first point or double-click to close`
         : selectedPolyId
-          ? "Polygon selected — edit in the panel"
+          ? "Polygon selected Ã¢â‚¬â€ edit in the panel"
           : "Select the polygon tool to begin";
 
   const tbBtn = (
@@ -459,7 +466,7 @@ export function AnnotateStudio() {
     </button>
   );
 
-  // ── Render Single Image ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Render Single Image Ã¢â€â‚¬Ã¢â€â‚¬
   const renderSingleImage = () => (
     <div className="flex-1 overflow-auto flex items-start justify-center bg-[#0F172A]">
       {selectedImage ? (
@@ -618,7 +625,7 @@ export function AnnotateStudio() {
     </div>
   );
 
-  // ── Render Grid View ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Render Grid View Ã¢â€â‚¬Ã¢â€â‚¬
   const renderGridView = () => (
     <div className="flex-1 overflow-auto p-6 bg-[#0F172A]">
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -695,7 +702,7 @@ export function AnnotateStudio() {
     </div>
   );
 
-  // ── Render Stacked View ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Render Stacked View Ã¢â€â‚¬Ã¢â€â‚¬
   const renderStackedView = () => (
     <div className="flex-1 overflow-auto p-6 bg-[#0F172A] space-y-8">
       {images.map((img) => {
@@ -785,7 +792,7 @@ export function AnnotateStudio() {
     </div>
   );
 
-  // ── Sidebar Image List (with Delete) ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Sidebar Image List (with Delete) Ã¢â€â‚¬Ã¢â€â‚¬
   const renderSidebarImages = () => (
     <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
       {images.map((img) => {
@@ -854,7 +861,7 @@ export function AnnotateStudio() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden" style={{ background: "#0F172A" }}>
-      {/* ── Toolbar ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Toolbar Ã¢â€â‚¬Ã¢â€â‚¬ */}
       <div className="h-12 bg-[#1E293B] border-b border-white/8 flex items-center px-3 gap-1 shrink-0">
         <button
           onClick={() => fileRef.current?.click()}
@@ -1002,7 +1009,7 @@ export function AnnotateStudio() {
         </div>
       </div>
 
-      {/* ── Main 3-pane ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Main 3-pane Ã¢â€â‚¬Ã¢â€â‚¬ */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left: Image list - Hidden in grid/stacked mode for more space */}
         {viewMode === "single" && (

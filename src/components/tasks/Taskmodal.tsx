@@ -16,9 +16,24 @@ interface TaskModalProps {
   onSave: (data: TaskFormData) => void;
   task?: BackendTask | null;
   defaultStatus?: TaskStatus;
+  /**
+   * নতুন task তৈরির সময় dueDate ফিল্ড pre-fill করার জন্য (সাধারণত
+   * TasksBoard-এর selectedDate)। edit mode-এ এটা ব্যবহার হয় না —
+   * তখন task.due_date-ই ব্যবহৃত হয়। এই prop-টাই একমাত্র জায়গা যেখানে
+   * modal "date context" পায়, তাই DateSelector <-> TaskModal coupling
+   * তৈরি হয় না।
+   */
+  defaultDueDate?: string;
 }
 
-export function TaskModal({ open, onClose, onSave, task, defaultStatus }: TaskModalProps) {
+export function TaskModal({
+  open,
+  onClose,
+  onSave,
+  task,
+  defaultStatus,
+  defaultDueDate,
+}: TaskModalProps) {
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
   const [status, setStatus] = useState<TaskStatus>("todo");
@@ -28,8 +43,9 @@ export function TaskModal({ open, onClose, onSave, task, defaultStatus }: TaskMo
   const [assignee, setAssignee] = useState("");
 
   // Modal open হওয়ার মুহূর্তেই ফর্ম রিসেট করা হয় (edit হলে টাস্কের ডেটা দিয়ে,
-  // নতুন তৈরি হলে খালি রেখে)। এটা effect-এর বদলে render-time-এ করা হচ্ছে,
-  // যাতে extra render pass বা cascading effect তৈরি না হয়।
+  // নতুন তৈরি হলে defaultStatus/defaultDueDate দিয়ে)। এটা effect-এর বদলে
+  // render-time-এ করা হচ্ছে, যাতে extra render pass বা cascading effect
+  // তৈরি না হয়।
   const [prevOpen, setPrevOpen] = useState(false);
   if (open !== prevOpen) {
     setPrevOpen(open);
@@ -47,7 +63,7 @@ export function TaskModal({ open, onClose, onSave, task, defaultStatus }: TaskMo
         setDesc("");
         setStatus(defaultStatus ?? "todo");
         setPriority("medium");
-        setDueDate("");
+        setDueDate(defaultDueDate ?? "");
         setTags([]);
         setAssignee("");
       }
