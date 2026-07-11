@@ -16,7 +16,7 @@ interface TaskStore {
 }
 
 export const useTaskStore = create<TaskStore>((set, get) => ({
-  selectedDate: format(new Date(), "yyyy-MM-dd"),
+  selectedDate: "",
   tasks: [],
   loading: false,
 
@@ -28,7 +28,8 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   fetchTasksByDate: async (date) => {
     set({ loading: true });
     try {
-      const data = await apiFetch<BackendTask[]>(`/api/tasks/?date=${date}`);
+      const url = date ? `/api/tasks/?date=${date}` : `/api/tasks/`;
+      const data = await apiFetch<BackendTask[]>(url);
       set({ tasks: data, loading: false });
     } catch (error) {
       console.error("Failed to fetch tasks:", error);

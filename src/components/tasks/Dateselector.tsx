@@ -21,7 +21,11 @@ export function DateSelector({ selectedDate, onChange, loading, taskCount }: Dat
       </div>
 
       <p className="text-xs text-[#64748B]">
-        {loading ? "Loading..." : `${taskCount} tasks for this day`}
+        {loading
+          ? "Loading..."
+          : selectedDate
+          ? `${taskCount} tasks for this day`
+          : `${taskCount} tasks in total`}
       </p>
     </>
   );

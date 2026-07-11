@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
 import { DatePicker } from "@/components/ui/DatePicker";
 import { cn } from "@/lib/utils";
+import { format } from "date-fns";
 
 interface TaskModalProps {
   open: boolean;
@@ -63,7 +64,7 @@ export function TaskModal({
         setDesc("");
         setStatus(defaultStatus ?? "todo");
         setPriority("medium");
-        setDueDate(defaultDueDate ?? "");
+        setDueDate(defaultDueDate || format(new Date(), "yyyy-MM-dd"));
         setTags([]);
         setAssignee("");
       }

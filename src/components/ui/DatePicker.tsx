@@ -13,7 +13,7 @@ import {
   isToday,
   parseISO,
 } from "date-fns";
-import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
+import { Calendar, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface DatePickerProps {
@@ -54,12 +54,25 @@ export function DatePicker({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 h-10 px-3 rounded-xl border border-[rgba(15,23,42,0.1)] bg-white text-sm w-full hover:border-[#7C3AED] transition-all"
+        className="flex items-center justify-between h-10 px-3 rounded-xl border border-[rgba(15,23,42,0.1)] bg-white text-sm w-full hover:border-[#7C3AED] transition-all"
       >
-        <Calendar size={13} className="text-[#94A3B8] shrink-0" />
-        <span className={selected ? "text-[#0F172A]" : "text-[#94A3B8]"}>
-          {selected ? format(selected, "MMM d, yyyy") : placeholder}
-        </span>
+        <div className="flex items-center gap-2 overflow-hidden">
+          <Calendar size={13} className="text-[#94A3B8] shrink-0" />
+          <span className={cn("truncate", selected ? "text-[#0F172A]" : "text-[#94A3B8]")}>
+            {selected ? format(selected, "MMM d, yyyy") : placeholder}
+          </span>
+        </div>
+        {selected && (
+          <span
+            onClick={(e) => {
+              e.stopPropagation();
+              onChange("");
+            }}
+            className="p-1 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors shrink-0"
+          >
+            <X size={12} />
+          </span>
+        )}
       </button>
 
       {open && (
