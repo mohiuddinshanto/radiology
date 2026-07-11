@@ -1,8 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import { usePathname } from "next/navigation";
-import { Bell, Search, Menu } from "lucide-react";
+import { Bell, Menu } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
 import { useAuth } from "@/components/providers/AuthProvider";
 
@@ -18,7 +17,6 @@ interface NavbarProps {
 }
 
 export function Navbar({ onMenuToggle }: NavbarProps) {
-  const [search, setSearch] = useState("");
   const pathname = usePathname();
   const { user } = useAuth();
   const title = PAGE_TITLES[pathname] ?? "404 Project";
@@ -37,17 +35,6 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
       <h1 className="text-[13px] font-semibold text-[#0F172A] hidden sm:block shrink-0">
         {title}
       </h1>
-
-      {/* Search */}
-      <div className="flex-1 max-w-xs relative hidden sm:block">
-        <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search…"
-          className="w-full h-8 pl-8 pr-3 rounded-xl bg-[#F8FAFC] border border-[rgba(15,23,42,0.08)] text-xs text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20 focus:border-[#7C3AED] transition-all"
-        />
-      </div>
 
       {/* Right actions */}
       <div className="flex items-center gap-1.5 ml-auto">
